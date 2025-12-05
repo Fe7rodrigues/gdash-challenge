@@ -1,0 +1,99 @@
+services:
+  # 1. Banco de Dados
+  mongodb:
+    image: mongo:latest
+    container_name: gdash-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    ports:
+      - "27017:27017"
+    networks:
+      - gdash-net
+    volumes:
+      - mongo-data:/data/db
+
+  # 2. RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: gdash-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - gdash-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. Backend (NestJS)
+  backend:
+    build: ./backend
+    container_name: gdash-backend
+    depends_on:
+      - mongodb
+    environment:
+      MONGO_URI: "mongodb://root:root@mongodb:27017/gdash_db?authSource=admin"
+    ports:
+      - "3000:3000"
+    networks:
+      - gdash-net
+    restart: unless-stopped
+
+  # 4. Frontend (React) - NOVO
+  frontend:
+    build: ./frontend
+    container_name: gdash-frontend
+    ports:
+      - "5173:5173"
+    networks:
+      - gdash-net
+    restart: unless-stopped
+
+  # 5. Coletor (Python)
+  data-collector:
+    build: ./data-collector
+    container_name: gdash-python
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=admin123
+      - LATITUDE=-23.4442
+      - LONGITUDE=-46.9205
+    networks:
+      - gdash-net
+    restart: unless-stopped
+
+  # 6. Worker (Go)
+  queue-worker:
+    build: ./queue-worker
+    container_name: gdash-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=admin123
+    networks:
+      - gdash-net
+    restart: unless-stopped
+
+networks:
+  gdash-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
